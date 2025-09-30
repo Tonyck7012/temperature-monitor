@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>溫濕度監控 - 多間隔歷史記錄</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <style>
+        :root {
+            --primary: #667eea;
+            --secondary: #764ba2;
+            --success: #4CAF50;
+            --warning: #FF9800;
+            --error: #f44336;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Microsoft JhengHei', Arial, sans-serif;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: white;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            background: rgba(255,255,255,0.1);
+            padding: 20px;
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .status-bar {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+        
+        .status-item {
+            background: rgba(255,255,255,0.1);
+            padding: 15px;
+            border-radius: 15px;
+            text-align: center;
+            backdrop-filter: blur(10px);
+        }
+        
+        .status-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        
+        .connected { background: var(--success); }
+        .disconnected { background: var(--error); }
+        .connecting { background: var(--warning); }
+        
+        .real-time-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+        
+        .card {
+            background: rgba(255,255,255,0.1);
+            border-radius: 20px;
+            padding: 25px;
+            text-align: center;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+            transition: transform 0.3s ease;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+        }
+        
+        .card-icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+        }
+        
+        .card-value {
+            font-size: 2.8em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        
+        .card-unit {
+            font-size: 0.5em;
+            opacity: 0.8;
+        }
+        
+        .chart-container {
+            background: rgba(255,255,255,0.1);
+            border-radius: 20px;
+            padding: 25px;
+            margin-bottom: 25px;
+            backdrop-filter: blur(10px);
+            position: relative;
+            min-height: 400px;
+        }
+        
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        
+        .chart-controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .interval-controls {
+            display: flex;
+            gap: 8px;
+            background: rgba(255,255,255,0.1);
+            padding: 8px;
+            border-radius: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .interval-btn {
+            background: rgba(255,255,255,0.2);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.9em;
+        }
+        
+        .interval-btn.active {
+            background: rgba(255,255,255,0.4);
+            font-weight: bold;
+        }
+        
+        .interval-btn:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        
+        .chart-btn {
+            background: rgba(255,255,255,0.2);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .chart-btn.active {
+            background: rgba(255,255,255,0.4);
+        }
+        
+        .chart-btn:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        
+        .data-log {
+            background: rgba(0,0,0,0.2);
+            border-radius: 15px;
+            padding: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            padding: 8px 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+        
+        .log-time {
+            opacity: 0.7;
+            margin-right: 10px;
+        }
+        
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        .btn {
+            background: rgba(255,255,255,0.2);
+            border: 2px solid white;
+            color: white;
+            padding: 12px 25px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1em;
+            margin: 0 10px;
+            transition: all 0.3s ease;
+            font-family: 'Microsoft JhengHei', Arial, sans-serif;
+        }
+        
+        .btn:hover {
+            background: rgba(255,255,255,0.3);
+            transform: translateY(-2px);
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .stat-item {
+            background: rgba(255,255,255,0.1);
+            padding: 15px;
+            border-radius: 15px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            margin: 5px 0;
+        }
+        
+        .no-data {
+            text-align: center;
+            padding: 40px;
+            opacity: 0.7;
+        }
+        
+        .data-info {
+            margin-top: 10px;
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+        
+        @media (max-width: 768px) {
+            .status-bar, .real-time-cards, .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .chart-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            
+            .interval-controls, .chart-controls {
+                width: 100%;
+                justify-content: center;
+            }
+            
+            .btn {
+                display: block;
+                width: 100%;
+                margin: 10px 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌡️ 溫濕度監控 - 多間隔歷史記錄</h1>
+            <p>實時數據 + 可調間隔記錄 • 最多保存3天數據</p>
+        </div>
+        
+        <div class="status-bar">
+            <div class="status-item">
+                <span id="statusDot" class="status-dot disconnected"></span>
+                <span id="statusText">離線</span>
+            </div>
+            <div class="status-item">
+                📱 設備ID: <span id="deviceId">--</span>
+            </div>
+            <div class="status-item">
+                ⏱️ 最後更新: <span id="lastUpdate">--</span>
+            </div>
+            <div class="status-item">
+                📊 數據包: <span id="packetCount">0</span>
+            </div>
+        </div>
+        
+        <div class="real-time-cards">
+            <div class="card">
+                <div class="card-icon">🌡️</div>
+                <div class="card-label">當前溫度</div>
+                <div class="card-value" id="temperature">--<span class="card-unit">°C</span></div>
+                <div id="tempTime">--</div>
+            </div>
+            
+            <div class="card">
+                <div class="card-icon">💧</div>
+                <div class="card-label">當前濕度</div>
+                <div class="card-value" id="humidity">--<span class="card-unit">%</span></div>
+                <div id="humTime">--</div>
+            </div>
+            
+            <div class="card">
+                <div class="card-icon">📶</div>
+                <div class="card-label">信號強度</div>
+                <div class="card-value" id="rssi">--<span class="card-unit">dBm</span></div>
+                <div>WiFi質量</div>
+            </div>
+        </div>
+
+        <!-- 統計數據 -->
+        <div class="stats-grid">
+            <div class="stat-item">
+                <div>📈 最高溫度</div>
+                <div class="stat-value" id="maxTemp">--°C</div>
+                <div id="maxTempTime">--</div>
+            </div>
+            <div class="stat-item">
+                <div>📉 最低溫度</div>
+                <div class="stat-value" id="minTemp">--°C</div>
+                <div id="minTempTime">--</div>
+            </div>
+            <div class="stat-item">
+                <div>📊 平均溫度</div>
+                <div class="stat-value" id="avgTemp">--°C</div>
+                <div>當前間隔</div>
+            </div>
+            <div class="stat-item">
+                <div>🕒 記錄時長</div>
+                <div class="stat-value" id="recordDuration">0小時</div>
+                <div>數據點: <span id="dataPoints">0</span></div>
+            </div>
+        </div>
+        
+        <!-- 圖表區域 -->
+        <div class="chart-container">
+            <div class="chart-header">
+                <h2>📈 溫度變化趨勢</h2>
+                <div class="chart-controls">
+                    <button class="chart-btn active" onclick="changeTimeRange(72)">3天</button>
+                    <button class="chart-btn" onclick="changeTimeRange(24)">1天</button>
+                    <button class="chart-btn" onclick="changeTimeRange(6)">6小時</button>
+                    <button class="chart-btn" onclick="exportData()">💾 導出數據</button>
+                    <button class="chart-btn" onclick="clearHistory()">🗑️ 清除記錄</button>
+                </div>
+            </div>
+            
+            <div class="interval-controls">
+                <span>記錄間隔:</span>
+                <button class="interval-btn active" onclick="changeInterval('10s')">10秒</button>
+                <button class="interval-btn" onclick="changeInterval('1m')">1分鐘</button>
+                <button class="interval-btn" onclick="changeInterval('30m')">30分鐘</button>
+                <button class="interval-btn" onclick="changeInterval('1h')">1小時</button>
+                <span class="data-info" id="intervalInfo">當前: 10秒間隔</span>
+            </div>
+            
+            <div id="tempChartWrapper">
+                <canvas id="temperatureChart"></canvas>
+            </div>
+            <div id="tempNoData" class="no-data" style="display: none;">
+                <p>📊 等待溫度數據中...</p>
+                <p>請確保ESP8266設備已連接並發送數據</p>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-header">
+                <h2>📊 濕度變化趨勢</h2>
+                <div class="chart-controls">
+                    <button class="chart-btn active" onclick="changeHumidityRange(72)">3天</button>
+                    <button class="chart-btn" onclick="changeHumidityRange(24)">1天</button>
+                    <button class="chart-btn" onclick="changeHumidityRange(6)">6小時</button>
+                </div>
+            </div>
+            
+            <div class="interval-controls">
+                <span>記錄間隔:</span>
+                <button class="interval-btn active" onclick="changeHumidityInterval('10s')">10秒</button>
+                <button class="interval-btn" onclick="changeHumidityInterval('1m')">1分鐘</button>
+                <button class="interval-btn" onclick="changeHumidityInterval('30m')">30分鐘</button>
+                <button class="interval-btn" onclick="changeHumidityInterval('1h')">1小時</button>
+                <span class="data-info" id="humidityIntervalInfo">當前: 10秒間隔</span>
+            </div>
+            
+            <div id="humChartWrapper">
+                <canvas id="humidityChart"></canvas>
+            </div>
+            <div id="humNoData" class="no-data" style="display: none;">
+                <p>💧 等待濕度數據中...</p>
+                <p>請確保ESP8266設備已連接並發送數據</p>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <button class="btn" onclick="connectMQTT()">🔄 連接MQTT</button>
+            <button class="btn" onclick="toggleAutoScroll()">📜 自動滾動: <span id="autoScrollStatus">開</span></button>
+        </div>
+        
+        <div class="data-log">
+            <h3>📋 實時數據日誌</h3>
+            <div id="logContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        // MQTT設定
+        const mqttOptions = {
+            hostname: 'test.mosquitto.org',
+            port: 8081,
+            protocol: 'wss',
+            path: '/',
+            reconnectPeriod: 0
+        };
+        
+        let client = null;
+        let isConnected = false;
+        let autoScroll = true;
+        let lastDataTime = null;
+        
+        // 數據存儲設定
+        const MAX_STORAGE_TIME = 3 * 24 * 60 * 60 * 1000; // 3天的毫秒數
+        let rawData = []; // 存儲所有原始數據
+        let displayData = {
+            temperature: [],
+            humidity: []
+        };
+        
+        // 間隔設定
+        const intervals = {
+            '10s': { ms: 10 * 1000, name: '10秒' },
+            '1m': { ms: 60 * 1000, name: '1分鐘' },
+            '30m': { ms: 30 * 60 * 1000, name: '30分鐘' },
+            '1h': { ms: 60 * 60 * 1000, name: '1小時' }
+        };
+        
+        let currentInterval = '10s';
+        let currentHumidityInterval = '10s';
+        let currentTimeRange = 72; // 小時
+        
+        // Chart.js 實例
+        let temperatureChart = null;
+        let humidityChart = null;
+        
+        // DOM元素
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const temperatureElement = document.getElementById('temperature');
+        const humidityElement = document.getElementById('humidity');
+        const rssiElement = document.getElementById('rssi');
+        const deviceIdElement = document.getElementById('deviceId');
+        const lastUpdateElement = document.getElementById('lastUpdate');
+        const packetCountElement = document.getElementById('packetCount');
+        const logContainer = document.getElementById('logContainer');
+        const autoScrollStatus = document.getElementById('autoScrollStatus');
+        const tempTimeElement = document.getElementById('tempTime');
+        const humTimeElement = document.getElementById('humTime');
+        const intervalInfo = document.getElementById('intervalInfo');
+        const humidityIntervalInfo = document.getElementById('humidityIntervalInfo');
+        
+        // 統計元素
+        const maxTempElement = document.getElementById('maxTemp');
+        const minTempElement = document.getElementById('minTemp');
+        const avgTempElement = document.getElementById('avgTemp');
+        const recordDurationElement = document.getElementById('recordDuration');
+        const dataPointsElement = document.getElementById('dataPoints');
+        const maxTempTimeElement = document.getElementById('maxTempTime');
+        const minTempTimeElement = document.getElementById('minTempTime');
+
+        // 初始化圖表
+        function initializeCharts() {
+            try {
+                const tempCtx = document.getElementById('temperatureChart');
+                const humCtx = document.getElementById('humidityChart');
+                
+                if (!tempCtx || !humCtx) {
+                    console.error('圖表canvas元素未找到');
+                    return;
+                }
+                
+                // 溫度圖表
+                temperatureChart = new Chart(tempCtx.getContext('2d'), {
+                    type: 'line',
+                    data: {
+                        datasets: [{
+                            label: '溫度 (°C)',
+                            data: [],
+                            borderColor: '#FF6B6B',
+                            backgroundColor: 'rgba(255, 107, 107, 0.1)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 2,
+                            pointHoverRadius: 5
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                type: 'time',
+                                time: {
+                                    unit: 'hour',
+                                    tooltipFormat: 'MM月dd日 HH:mm',
+                                    displayFormats: {
+                                        hour: 'MM月dd日 HH:mm'
+                                    }
+                                },
+                                title: {
+                                    display: true,
+                                    text: '時間',
+                                    color: 'white'
+                                },
+                                ticks: {
+                                    color: 'white',
+                                    maxTicksLimit: 8
+                                }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: '溫度 (°C)',
+                                    color: 'white'
+                                },
+                                ticks: {
+                                    color: 'white'
+                                },
+                                suggestedMin: 15,
+                                suggestedMax: 35
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                labels: {
+                                    color: 'white'
+                                }
+                            },
+                            tooltip: {
+                                mode: 'index',
+                                intersect: false,
+                                backgroundColor: 'rgba(0, 0, 0, 0.8)'
+                            }
+                        }
+                    }
+                });
+                
+                // 濕度圖表
+                humidityChart = new Chart(humCtx.getContext('2d'), {
+                    type: 'line',
+                    data: {
+                        datasets: [{
+                            label: '濕度 (%)',
+                            data: [],
+                            borderColor: '#4D96FF',
+                            backgroundColor: 'rgba(77, 150, 255, 0.1)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 2,
+                            pointHoverRadius: 5
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                type: 'time',
+                                time: {
+                                    unit: 'hour',
+                                    tooltipFormat: 'MM月dd日 HH:mm',
+                                    displayFormats: {
+                                        hour: 'MM月dd日 HH:mm'
+                                    }
+                                },
+                                title: {
+                                    display: true,
+                                    text: '時間',
+                                    color: 'white'
+                                },
+                                ticks: {
+                                    color: 'white',
+                                    maxTicksLimit: 8
+                                }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: '濕度 (%)',
+                                    color: 'white'
+                                },
+                                ticks: {
+                                    color: 'white'
+                                },
+                                suggestedMin: 30,
+                                suggestedMax: 80
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                labels: {
+                                    color: 'white'
+                                }
+                            },
+                            tooltip: {
+                                mode: 'index',
+                                intersect: false,
+                                backgroundColor: 'rgba(0, 0, 0, 0.8)'
+                            }
+                        }
+                    }
+                });
+                
+                console.log('圖表初始化成功');
+                
+            } catch (error) {
+                console.error('圖表初始化失敗:', error);
+                addLog('❌ 圖表初始化失敗: ' + error.message);
+            }
+        }
+        
+        // 添加原始數據點
+        function addRawDataPoint(temperature, humidity) {
+            try {
+                const now = new Date();
+                const timestamp = now.getTime();
+                
+                // 添加新數據
+                rawData.push({
+                    timestamp: timestamp,
+                    temperature: parseFloat(temperature),
+                    humidity: parseFloat(humidity)
+                });
+                
+                // 清理超過3天的舊數據
+                const cutoffTime = Date.now() - MAX_STORAGE_TIME;
+                rawData = rawData.filter(point => point.timestamp >= cutoffTime);
+                
+                // 更新顯示數據
+                updateDisplayData();
+                
+                // 更新統計信息
+                updateStatistics();
+                
+            } catch (error) {
+                console.error('添加數據點錯誤:', error);
+                addLog('❌ 添加數據點錯誤: ' + error.message);
+            }
+        }
+        
+        // 根據間隔更新顯示數據
+        function updateDisplayData() {
+            if (rawData.length === 0) return;
+            
+            // 更新溫度顯示數據
+            displayData.temperature = aggregateData(rawData, 'temperature', currentInterval);
+            
+            // 更新濕度顯示數據
+            displayData.humidity = aggregateData(rawData, 'humidity', currentHumidityInterval);
+            
+            // 更新圖表
+            updateCharts();
+        }
+        
+        // 數據聚合函數
+        function aggregateData(data, field, interval) {
+            if (data.length === 0) return [];
+            
+            const intervalMs = intervals[interval].ms;
+            const aggregated = [];
+            let currentBucket = null;
+            
+            // 按時間間隔分組並計算平均值
+            data.forEach(point => {
+                const bucketTime = Math.floor(point.timestamp / intervalMs) * intervalMs;
+                
+                if (!currentBucket || currentBucket.timestamp !== bucketTime) {
+                    if (currentBucket) {
+                        aggregated.push(currentBucket);
+                    }
+                    currentBucket = {
+                        timestamp: bucketTime,
+                        values: [point[field]]
+                    };
+                } else {
+                    currentBucket.values.push(point[field]);
+                }
+            });
+            
+            // 添加最後一個桶
+            if (currentBucket) {
+                aggregated.push(currentBucket);
+            }
+            
+            // 轉換為圖表數據格式並計算平均值
+            return aggregated.map(bucket => ({
+                x: bucket.timestamp,
+                y: bucket.values.reduce((sum, val) => sum + val, 0) / bucket.values.length
+            }));
+        }
+        
+        // 改變記錄間隔
+        function changeInterval(interval) {
+            currentInterval = interval;
+            intervalInfo.textContent = `當前: ${intervals[interval].name}間隔`;
+            
+            // 更新按鈕狀態
+            updateIntervalButtons('interval', interval);
+            
+            // 更新顯示數據
+            updateDisplayData();
+        }
+        
+        function changeHumidityInterval(interval) {
+            currentHumidityInterval = interval;
+            humidityIntervalInfo.textContent = `當前: ${intervals[interval].name}間隔`;
+            
+            // 更新按鈕狀態
+            updateIntervalButtons('humidityInterval', interval);
+            
+            // 更新顯示數據
+            updateDisplayData();
+        }
+        
+        // 更新間隔按鈕狀態
+        function updateIntervalButtons(type, activeInterval) {
+            const buttons = document.querySelectorAll(`.interval-controls .interval-btn`);
+            buttons.forEach(btn => {
+                if (btn.textContent === activeInterval.replace('s', '秒').replace('m', '分鐘').replace('h', '小時')) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
+        
+        // 改變時間範圍
+        function changeTimeRange(hours) {
+            currentTimeRange = hours;
+            updateCharts();
+            
+            // 更新按鈕狀態
+            updateTimeRangeButtons(hours);
+        }
+        
+        function changeHumidityRange(hours) {
+            changeTimeRange(hours);
+        }
+        
+        // 更新時間範圍按鈕狀態
+        function updateTimeRangeButtons(activeRange) {
+            const buttons = document.querySelectorAll('.chart-controls .chart-btn');
+            buttons.forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+        }
+        
+        // 更新圖表
+        function updateCharts() {
+            try {
+                if (!temperatureChart || !humidityChart) return;
+                
+                // 計算時間範圍
+                const cutoffTime = Date.now() - (currentTimeRange * 60 * 60 * 1000);
+                
+                // 過濾溫度數據
+                const filteredTempData = displayData.temperature.filter(point => point.x >= cutoffTime);
+                const filteredHumData = displayData.humidity.filter(point => point.x >= cutoffTime);
+                
+                // 更新溫度圖表
+                if (temperatureChart.data && temperatureChart.data.datasets) {
+                    temperatureChart.data.datasets[0].data = filteredTempData;
+                    temperatureChart.update('none');
+                }
+                
+                // 更新濕度圖表
+                if (humidityChart.data && humidityChart.data.datasets) {
+                    humidityChart.data.datasets[0].data = filteredHumData;
+                    humidityChart.update('none');
+                }
+                
+                // 更新圖表可見性
+                updateChartVisibility();
+                
+            } catch (error) {
+                console.error('更新圖表錯誤:', error);
+            }
+        }
+        
+        // 更新圖表顯示狀態
+        function updateChartVisibility() {
+            const tempNoData = document.getElementById('tempNoData');
+            const humNoData = document.getElementById('humNoData');
+            const tempChartWrapper = document.getElementById('tempChartWrapper');
+            const humChartWrapper = document.getElementById('humChartWrapper');
+            
+            if (displayData.temperature.length > 0) {
+                tempNoData.style.display = 'none';
+                tempChartWrapper.style.display = 'block';
+            } else {
+                tempNoData.style.display = 'block';
+                tempChartWrapper.style.display = 'none';
+            }
+            
+            if (displayData.humidity.length > 0) {
+                humNoData.style.display = 'none';
+                humChartWrapper.style.display = 'block';
+            } else {
+                humNoData.style.display = 'block';
+                humChartWrapper.style.display = 'none';
+            }
+        }
+        
+        // 更新統計信息
+        function updateStatistics() {
+            try {
+                if (rawData.length === 0) {
+                    // 沒有數據時顯示默認值
+                    maxTempElement.textContent = '--°C';
+                    minTempElement.textContent = '--°C';
+                    avgTempElement.textContent = '--°C';
+                    recordDurationElement.textContent = '0小時';
+                    dataPointsElement.textContent = '0';
+                    maxTempTimeElement.textContent = '--';
+                    minTempTimeElement.textContent = '--';
+                    return;
+                }
+                
+                // 計算當前間隔內的統計數據
+                const cutoffTime = Date.now() - intervals[currentInterval].ms;
+                const recentData = rawData.filter(point => point.timestamp >= cutoffTime);
+                
+                if (recentData.length > 0) {
+                    const temps = recentData.map(point => point.temperature);
+                    const maxTemp = Math.max(...temps);
+                    const minTemp = Math.min(...temps);
+                    const avgTemp = (temps.reduce((a, b) => a + b, 0) / temps.length).toFixed(1);
+                    
+                    maxTempElement.textContent = maxTemp.toFixed(1) + '°C';
+                    minTempElement.textContent = minTemp.toFixed(1) + '°C';
+                    avgTempElement.textContent = avgTemp + '°C';
+                }
+                
+                // 總體統計
+                const allTemps = rawData.map(point => point.temperature);
+                const overallMaxTemp = Math.max(...allTemps);
+                const overallMinTemp = Math.min(...allTemps);
+                
+                // 找到最高和最低溫度的時間
+                const maxTempPoint = rawData.find(point => point.temperature === overallMaxTemp);
+                const minTempPoint = rawData.find(point => point.temperature === overallMinTemp);
+                
+                if (maxTempPoint) {
+                    maxTempTimeElement.textContent = new Date(maxTempPoint.timestamp).toLocaleString('zh-TW');
+                }
+                if (minTempPoint) {
+                    minTempTimeElement.textContent = new Date(minTempPoint.timestamp).toLocaleString('zh-TW');
+                }
+                
+                // 更新記錄時長
+                if (rawData.length > 1) {
+                    const duration = (rawData[rawData.length - 1].timestamp - rawData[0].timestamp) / (1000 * 60 * 60);
+                    recordDurationElement.textContent = duration.toFixed(1) + '小時';
+                }
+                
+                dataPointsElement.textContent = rawData.length;
+                
+            } catch (error) {
+                console.error('更新統計信息錯誤:', error);
+            }
+        }
+        
+        // 導出數據
+        function exportData() {
+            try {
+                if (rawData.length === 0) {
+                    alert('沒有數據可導出');
+                    return;
+                }
+                
+                const csv = rawData.map(point => {
+                    const date = new Date(point.timestamp);
+                    return `${date.toLocaleString('zh-TW')},${point.temperature},${point.humidity}`;
+                }).join('\n');
+                
+                const blob = new Blob(['時間,溫度(°C),濕度(%)\n' + csv], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `temperature_humidity_data_${new Date().toISOString().split('T')[0]}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                addLog('💾 數據已導出為CSV文件');
+                
+            } catch (error) {
+                console.error('導出數據錯誤:', error);
+                addLog('❌ 導出數據失敗: ' + error.message);
+            }
+        }
+        
+        // 清除歷史記錄
+        function clearHistory() {
+            try {
+                if (confirm('確定要清除所有歷史記錄嗎？')) {
+                    rawData = [];
+                    displayData = { temperature: [], humidity: [] };
+                    updateChartVisibility();
+                    updateCharts();
+                    updateStatistics();
+                    addLog('🗑️ 歷史記錄已清除');
+                }
+            } catch (error) {
+                console.error('清除歷史記錄錯誤:', error);
+            }
+        }
+        
+        // MQTT連接函數
+        function connectMQTT() {
+            if (isConnected) {
+                addLog('⚠️ 已經連接到MQTT服務器');
+                return;
+            }
+            
+            updateStatus('connecting', '正在連接 Mosquitto...');
+            addLog('🔗 正在連接 MQTT 服務器: ' + mqttOptions.hostname);
+            
+            try {
+                client = mqtt.connect(mqttOptions);
+                
+                client.on('connect', function() {
+                    isConnected = true;
+                    updateStatus('connected', '已連接到 Mosquitto');
+                    addLog('✅ MQTT連接成功');
+                    
+                    client.subscribe('home/sensor/temperature_humidity', function(err) {
+                        if (!err) {
+                            addLog('📡 已訂閱溫度濕度主題');
+                        } else {
+                            addLog('❌ 訂閱失敗: ' + err.message);
+                        }
+                    });
+                });
+                
+                client.on('message', function(topic, message) {
+                    try {
+                        const data = JSON.parse(message.toString());
+                        updateDisplay(data);
+                        addRawDataPoint(data.temperature, data.humidity);
+                        lastDataTime = new Date();
+                        
+                    } catch (e) {
+                        addLog('❌ 解析數據錯誤: ' + e.message);
+                    }
+                });
+                
+                client.on('error', function(err) {
+                    updateStatus('disconnected', '連接錯誤: ' + err.message);
+                    addLog('❌ MQTT錯誤: ' + err.message);
+                });
+                
+                client.on('close', function() {
+                    isConnected = false;
+                    updateStatus('disconnected', '連接已斷開');
+                    addLog('🔌 MQTT連接已關閉');
+                });
+                
+            } catch (error) {
+                addLog('❌ 連接失敗: ' + error.message);
+                updateStatus('disconnected', '連接失敗');
+            }
+        }
+        
+        function updateDisplay(data) {
+            temperatureElement.innerHTML = data.temperature.toFixed(1) + '<span class="card-unit">°C</span>';
+            humidityElement.innerHTML = data.humidity.toFixed(1) + '<span class="card-unit">%</span>';
+            rssiElement.innerHTML = (data.rssi || '--') + '<span class="card-unit">dBm</span>';
+            deviceIdElement.textContent = data.device || '未知設備';
+            packetCountElement.textContent = data.packet_count || '0';
+            
+            const now = new Date();
+            lastUpdateElement.textContent = now.toLocaleString('zh-TW');
+            tempTimeElement.textContent = '更新: ' + now.toLocaleTimeString('zh-TW');
+            humTimeElement.textContent = '更新: ' + now.toLocaleTimeString('zh-TW');
+        }
+        
+        function updateStatus(status, text) {
+            statusDot.className = 'status-dot ' + status;
+            statusText.textContent = text;
+        }
+        
+        function addLog(message) {
+            const now = new Date();
+            const timestamp = now.toLocaleTimeString('zh-TW');
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            logEntry.innerHTML = `<span class="log-time">[${timestamp}]</span> ${message}`;
+            
+            logContainer.appendChild(logEntry);
+            
+            if (autoScroll) {
+                logContainer.scrollTop = logContainer.scrollHeight;
+            }
+        }
+        
+        function toggleAutoScroll() {
+            autoScroll = !autoScroll;
+            autoScrollStatus.textContent = autoScroll ? '開' : '關';
+        }
+        
+        // 頁面載入時初始化
+        window.addEventListener('load', function() {
+            addLog('🌐 網頁監控界面已啟動');
+            addLog('📈 初始化多間隔圖表系統...');
+            
+            setTimeout(() => {
+                initializeCharts();
+                updateChartVisibility();
+                addLog('✅ 圖表系統初始化完成');
+                addLog('🔄 支持間隔: 10秒, 1分鐘, 30分鐘, 1小時');
+                connectMQTT();
+            }, 100);
+        });
+        
+        // 定時檢查數據更新
+        setInterval(function() {
+            if (lastDataTime && (new Date() - lastDataTime) > 60000) {
+                addLog('⚠️ 數據更新已停止，最後更新: ' + lastDataTime.toLocaleTimeString('zh-TW'));
+                lastDataTime = new Date();
+            }
+        }, 30000);
+    </script>
+</body>
+</html>
