@@ -292,6 +292,31 @@
             background: rgba(255,255,255,0.3);
         }
 
+        .server-selector {
+            margin: 15px 0;
+            text-align: center;
+        }
+
+        .server-btn {
+            background: rgba(255,255,255,0.2);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            margin: 0 5px;
+            transition: all 0.3s ease;
+        }
+
+        .server-btn.active {
+            background: rgba(255,255,255,0.4);
+            font-weight: bold;
+        }
+
+        .server-btn:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
         @media (max-width: 768px) {
             .status-bar, .real-time-cards, .stats-grid {
                 grid-template-columns: 1fr;
@@ -320,6 +345,13 @@
         <div class="header">
             <h1>🌡️ 溫濕度監控</h1>
             <p>ESP32 物聯網系統</p>
+        </div>
+
+        <div class="server-selector">
+            <h3>🌐 MQTT 服務器選擇</h3>
+            <button class="server-btn active" onclick="selectServer('mosquitto')">Mosquitto (WSS)</button>
+            <button class="server-btn" onclick="selectServer('hivemq')">HiveMQ (WSS)</button>
+            <button class="server-btn" onclick="selectServer('emqx')">EMQX (WSS)</button>
         </div>
 
         <div class="status-bar">
@@ -460,13 +492,29 @@
     </div>
 
     <script>
-        // MQTT設定 - 固定使用 Mosquitto (WS)
-        const mqttOptions = {
-            hostname: 'test.mosquitto.org',
-            port: 8080,
-            protocol: 'ws',
-            path: '/',
-            reconnectPeriod: 0
+        // MQTT服務器配置
+        const mqttServers = {
+            mosquitto: {
+                hostname: 'test.mosquitto.org',
+                port: 8081,
+                protocol: 'wss',
+                path: '/',
+                name: 'Mosquitto (WSS)'
+            },
+            hivemq: {
+                hostname: 'broker.hivemq.com',
+                port: 8884,
+                protocol: 'wss',
+                path: '/mqtt',
+                name: 'HiveMQ (WSS)'
+            },
+            emqx: {
+                hostname: 'broker.emqx.io',
+                port: 8084,
+                protocol: 'wss',
+                path: '/mqtt',
+                name: 'EMQX (WSS)'
+            }
         };
 
         // 全局變量
@@ -474,6 +522,7 @@
         let isConnected = false;
         let autoScroll = true;
         let lastDataTime = null;
+        let currentServer = 'mosquitto';
 
         // 數據存儲
         const MAX_STORAGE_TIME = 3 * 24 * 60 * 60 * 1000;
@@ -524,6 +573,24 @@
         const dataPointsElement = document.getElementById('dataPoints');
         const maxTempTimeElement = document.getElementById('maxTempTime');
         const minTempTimeElement = document.getElementById('minTempTime');
+
+        // 選擇服務器
+        function selectServer(server) {
+            if (isConnected) {
+                addLog('⚠️ 請先斷開當前連接再更換服務器');
+                return;
+            }
+            
+            currentServer = server;
+            
+            // 更新按鈕狀態
+            document.querySelectorAll('.server-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+            
+            addLog(`🔄 已選擇服務器: ${mqttServers[server].name}`);
+        }
 
         // 改變時間範圍
         function changeTimeRange(hours) {
@@ -985,14 +1052,15 @@
             }
 
             updateStatus('connecting', '正在連接...');
-            addLog(`🔗 正在連接 MQTT 服務器: ${mqttOptions.hostname}:${mqttOptions.port}`);
+            const server = mqttServers[currentServer];
+            addLog(`🔗 正在連接 MQTT 服務器: ${server.name}`);
 
             try {
-                client = mqtt.connect(mqttOptions);
+                client = mqtt.connect(server);
 
                 client.on('connect', function () {
                     isConnected = true;
-                    updateStatus('connected', '已連接到 Mosquitto (WS)');
+                    updateStatus('connected', `已連接到 ${server.name}`);
                     addLog('✅ MQTT連接成功');
 
                     // 訂閱溫度濕度主題
@@ -1020,6 +1088,17 @@
                 client.on('error', function (err) {
                     updateStatus('disconnected', '連接錯誤: ' + err.message);
                     addLog('❌ MQTT錯誤: ' + err.message);
+                    
+                    // 嘗試自動切換到另一個服務器
+                    if (currentServer === 'mosquitto') {
+                        addLog('🔄 嘗試切換到 HiveMQ 服務器');
+                        selectServer('hivemq');
+                        setTimeout(connectMQTT, 2000);
+                    } else if (currentServer === 'hivemq') {
+                        addLog('🔄 嘗試切換到 EMQX 服務器');
+                        selectServer('emqx');
+                        setTimeout(connectMQTT, 2000);
+                    }
                 });
 
                 client.on('close', function () {
@@ -1104,6 +1183,7 @@
                 updateChartVisibility();
                 addLog('✅ 圖表系統初始化完成');
                 addLog('🔄 支持間隔: 15秒, 30秒, 1分鐘, 30分鐘');
+                addLog('🌐 支持多個MQTT服務器: Mosquitto, HiveMQ, EMQX');
                 // 自動連接
                 connectMQTT();
             }, 100);
@@ -1119,4 +1199,3 @@
     </script>
 </body>
 </html>
-
